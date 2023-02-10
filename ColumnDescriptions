@@ -17,7 +17,7 @@ pctnohs18_24	Percentage of people aged 18-24 who did not graduate high school. (
 pcths18_24	Percentage of people aged 18-24 who graduated high school. (Numeric)
 pctsomecol18_24	Percentage of people aged 18-24 who attended some college. (Numeric)
 pctbachdeg18_24	Percentage of people aged 18-24 who have a bachelor's degree. (Numeric)
-pcths25_over	Percentage of people aged 25 and over who graduated high school. (Numeric)
+pcths25_over	Percentage of people aged 25 and over who graduated high school. (Numeric) \n
 pctbachdeg25_over	Percentage of people aged 25 and over who have a bachelor's degree. (Numeric)
 pctemployed16_over	Percentage of people aged 16 and over who are employed. (Numeric)
 pctunemployed16_over	Percentage of people aged 16 and over who are unemployed. (Numeric)
