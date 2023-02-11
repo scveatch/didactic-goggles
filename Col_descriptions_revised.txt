@@ -1,6 +1,6 @@
 
-Column name;	Description;
-geography;	Location name. (String);
+Column name;	Description
+geography;	Location name. (String)
 avganncount;	Average annual count of cancer cases in the county. (Numeric);
 avgdeathsperyear;	Average number of deaths per year in the county. (Numeric);
 target_deathrate;	Number of deaths per 100k individuals in each county. (Numeric);
