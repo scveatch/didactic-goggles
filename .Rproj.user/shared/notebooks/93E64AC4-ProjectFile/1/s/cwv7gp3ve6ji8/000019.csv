@@ -1,3 +1,0 @@
-"0","oregon <- cancer %>%"
-"0","  filter(grepl(""Oregon"", geography))"
-"0","oregon <- oregon[-37,] # remove one erroneous value from Oregon County, Missouri"
