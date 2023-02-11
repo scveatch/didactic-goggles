@@ -1,0 +1,4 @@
+"0","# Create a dataset of Column Name and related Description"
+"0","Information_df = read.table(""https://raw.github.com/scveatch/didactic-goggles/Dataset/Descriptions"", header = TRUE, sep = "";"")"
+"0",""
+"0","view(Information_df[, -3])"
