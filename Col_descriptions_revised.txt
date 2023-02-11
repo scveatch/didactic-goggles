@@ -1,5 +1,5 @@
 
-Column name;	Description
+Column name;	Description;
 geography;	Location name. (String);
 avganncount;	Average annual count of cancer cases in the county. (Numeric);
 avgdeathsperyear;	Average number of deaths per year in the county. (Numeric);
