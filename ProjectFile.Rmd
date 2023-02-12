@@ -8,9 +8,15 @@ date: "2023-02-01"
 #install.packages("GGally")
 #install.packages("tidyverse")
 #install.packages("caret")
+#install.packages("mgcv")
+#install.packages("mgcViz")
+#install.packages("ggplot2")
 library(GGally)
+library(ggplot2)
 library(tidyverse)
 library(caret)
+library(mgcv)
+library(mgcViz)
 ```
 
 ## Import Dataset
@@ -25,11 +31,13 @@ head(cancer, 5)
 ## Dataset Description
 
 As an aside, it seems that github is taking a really long time in updating the raw with committed changes. Hopefully that bug gets worked out soon -- as a test, I've commited a 21st row in the repository with the values "Hello;" "Hello;" that will hopefully pop up in the next pull. This feature will be necessary to keep full transparency when we create new columns. 
+
+* Update -- 2/11 (12:30); It looks like it updated properly, but we should keep the delay in mind. 
 ```{r}
 # Create a dataset of Column Name and related Description
-Information_df = read.table("https://raw.github.com/scveatch/didactic-goggles/Dataset/Descriptions", header = TRUE, sep = ";")
+Information_df = read.table("https://raw.github.com/scveatch/didactic-goggles/main/Descriptions", header = TRUE, sep = ";")
 
-view(Information_df[, -3])
+view(Information_df[, -3]) # remove erroneous 3rd column.
 ```
 
 
@@ -40,7 +48,7 @@ view(Information_df[, -3])
 str(cancer)
 ```
 
-Note that Binned Income is a "chr" variable; however, this won't need to be changed. Binned income is a categorical variable, we won't need to make it numeric to use it. However, there do seem to be a few features with missing values that ought to be further examined.
+As a general rule, this data seems very clean! Note that Binned Income is a "chr" variable, however, this won't need to be changed. Binned Income is a categorical variable, we won't need to make it numeric to use it. However, there do seem to be a few features with missing values that ought to be further examined.
 
 # Count Missing Values
 
@@ -67,10 +75,33 @@ As we can see pretty clearly from this dataframe, the feature "pctsomecol18_24" 
 
 ## Filter Dataset to Oregon
 
-There's no reason to use this just yet, but nonetheless, I'm making it because I think we may fall back to it sometime in the future. 
+There's no reason to use this just yet, but nonetheless, I'm making it because I think we may fall back to it sometime in the future, either for analysis or experimentation with a smaller dataset. 
 ```{r}
 oregon <- cancer %>%
   filter(grepl("Oregon", geography))
 oregon <- oregon[-37,] # remove one erroneous value from Oregon County, Missouri
 ```
-As we can see pretty clearly from this dataframe, the feature "pctsomecol18_24" is about 75% ommitted, and therefore should not be considered in any analysis without heavy caution. The feature "pctprivatecoveragealone" also has a significant amount omitted, about 20%, which should be noted. 
+
+## ggpairs Plot
+Let's identify a few variables. We'll want to use target_deathrate as a response given that it's normalized by cancer deaths per 100K individuals. We should also look at median age (cancer diagnoses tend to grow more frequent in older populations), the percent with private health coverage, and the median income of the area. And we'll also make a categorical variable with the percent of black people in a county. Let's set the line of demarcation to be 10%. 
+```{r}
+# Create true/false col in cancer1
+cancer1 <- cancer
+
+cancer1$over10pctblack = as.factor(
+    ifelse(cancer$pctblack >= 10, 1, 0) # set value to "1" if pctblack >= 10, else "0".
+  )
+
+# Count the number of counties over/under 10% black
+count(cancer1, over10pctblack)
+```
+Well, it seems like there aren't many counties in this country where over 10% of a county is black. Let's still see if there's any significance. 
+
+```{r}
+# Create a ggpairs plot colored along 
+ggpairs(cancer1, columns = c(4, 6, 11, 24),
+       ggplot2::aes(color = over10pctblack))
+```
+
+Well, it's not immediately clear that there are two fully separate groups here, but this plot does reveal some important facts. The first plot makes clear that the target deathrate for counties over 10% black is slightly higher than other counties. Similarly, we notice median income and the percent with private healthcare coverage are slightly lower for counties > 10% black. Further analysis is required, but we should keep in mind that a link between private healthcare coverage and target deathrate is likely to exist.  
+
