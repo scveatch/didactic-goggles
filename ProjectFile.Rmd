@@ -103,5 +103,38 @@ ggpairs(cancer1, columns = c(4, 6, 11, 24),
        ggplot2::aes(color = over10pctblack))
 ```
 
-Well, it's not immediately clear that there are two fully separate groups here, but this plot does reveal some important facts. The first plot makes clear that the target deathrate for counties over 10% black is slightly higher than other counties. Similarly, we notice median income and the percent with private healthcare coverage are slightly lower for counties > 10% black. Further analysis is required, but we should keep in mind that a link between private healthcare coverage and target deathrate is likely to exist.  
+Well, it's not immediately clear that there are two fully separate groups here, but this plot does reveal some important facts. The first plot makes clear that the target deathrate for counties over 10% black is slightly higher than other counties. Similarly, we notice median income and the percent with private healthcare coverage are slightly lower for counties > 10% black. Further analysis is required, but we should keep in mind that a link between private healthcare coverage and target deathrate is likely to exist. It also looks like there's some anomalous values in median age that need to be filtered out. 
 
+## Adjust Median Age
+So, it looks like there are some values in median age which are horribly wrong. Any county with a median age above 90 is filled with antediluvian specimens -- and some of these counties are reporting a median age in the 500s! It doesn't look like it was just a mistake in data entry either; for example, Seward County Nevada has a median male age of 36.3, and a median female age of 40.7, and their reported median age is 458.4. Even if this is a case of a misplaced decimal, their median age would be 45.84, which is higher than both their median male and female ages and really makes no sense. So, for values like this, I've taken the median of the male and female age medians and used this value to replace that county's median age.
+```{r}
+# Adjust Median Age
+for (i in 1:nrow(cancer1)){
+  if (cancer1[i,]$medianage > 90){
+    cancer1[i,]$medianage <- median(cancer1[i,]$medianagemale, cancer1[i,]$medianagefemale)
+  }
+}
+
+summary(cancer1$medianage) # double check our work here...
+```
+
+## Split Data into Train and Test sets
+
+```{r}
+set.seed(1729) # Points if you know the significance of this number!
+
+smpl_size <- floor(.7 * nrow(cancer1)) # create a 70 - 30 split
+
+train_indexes <- sample(seq_len(nrow(cancer1)), size = smpl_size, replace = FALSE)
+train <- cancer[train_indexes, ]
+test <- cancer[-train_indexes, ]
+```
+## Fit Linear Model
+
+```{r}
+mod1 <- lm(data = train, target_deathrate ~ medincome)
+summary(mod1)
+plot(mod1)
+```
+
+Well that just looks like a nasty fit. Only a 19.65% R-squared!
