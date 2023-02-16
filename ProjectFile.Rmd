@@ -2,6 +2,7 @@
 title: "Project File"
 output: html_document
 date: "2023-02-01"
+authors: "Spencer Veatch, Eric Kaszycki, Charlie Wiebe"
 ---
 ## Install Packages
 ```{r message = FALSE}
@@ -126,8 +127,8 @@ set.seed(1729) # Points if you know the significance of this number!
 smpl_size <- floor(.7 * nrow(cancer1)) # create a 70 - 30 split
 
 train_indexes <- sample(seq_len(nrow(cancer1)), size = smpl_size, replace = FALSE)
-train <- cancer[train_indexes, ]
-test <- cancer[-train_indexes, ]
+train <- cancer1[train_indexes, ]
+test <- cancer1[-train_indexes, ]
 ```
 ## Fit Linear Model
 
@@ -138,3 +139,21 @@ plot(mod1)
 ```
 
 Well that just looks like a nasty fit. Only a 19.65% R-squared!
+
+
+## Parallel Lines Model
+```{r}
+mod2 <- lm(data = train, target_deathrate ~ medincome + train$over)
+summary(mod2)
+mod2$coefficients
+```
+# Visualize Parallel Lines
+```{r}
+ggplot(data= train, aes(x= medincome, y= target_deathrate, color = train$over10pctblack))+
+  geom_point(alpha = .5)+
+  geom_abline(intercept=mod2$coefficients[1]+mod2$coefficients[3], 
+              slope=mod2$coefficients[2], color="blue")+
+  geom_abline(intercept=mod2$coefficients[1], 
+              slope=mod2$coefficients[2], color="red")
+```
+
