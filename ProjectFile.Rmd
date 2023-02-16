@@ -157,3 +157,90 @@ ggplot(data= train, aes(x= medincome, y= target_deathrate, color = train$over10p
               slope=mod2$coefficients[2], color="red")
 ```
 
+### Milestone #3
+
+# Polynomial
+```{r}
+m5 <- lm(target_deathrate~poly(medincome, 5), data = train)
+
+ggplot(train, aes(x=medincome, y=target_deathrate))+
+  geom_point()+
+  geom_line(aes(y=m2$fitted.values), color="yellow", size=1)+
+  ggtitle("Degree 5")
+```
+
+# GAM
+```{r}
+M_Gam<-gam(target_deathrate~s(medincome), data = train)
+#summary(M_Gam)
+
+ggplot(train, aes(x=medincome, y=target_deathrate))+
+  geom_point()+
+  geom_line(aes(y=M_Gam$fitted.values), color="red", size=1)+
+  geom_line(aes(y=m5$fitted.values), color="blue", size=1)+
+  ggtitle("GAM Model (Red) vs Poly 3 (Blue)")
+```
+
+# Loess
+```{r}
+L1<-loess(target_deathrate~medincome, data = train)
+
+ggplot(train, aes(x=medincome, y=target_deathrate))+
+  geom_point()+
+  geom_line(aes(y=predict(L1)), color="green", size=1)
+```
+
+
+# k-fold CV
+```{r}
+
+# for commonality using 5
+kf<-5
+
+ind<-sample(1:150)
+
+folds<-data.frame(ind, 
+                  fold=rep(1:kf, 150/kf))
+
+### ADD ON COLUMNS TO ORIGINAL DAT
+foldPoly<-train[ind,]%>%
+  cbind(folds)
+
+### INITIALIZE RMSE DATAFRAME TO HOLD OUTPUT
+RMSE <- data.frame('fold' = NA, 'kth.order' = NA, 'RMSE' = NA, 'TestRMSE'=NA) # empty data frame to store RMSE
+
+### LOOP FOR CROSS-VALIDATION
+for(i in 1:kf){
+  trainDat<-foldPoly%>%
+    filter(fold!=i)
+  
+  testDat<-foldPoly%>%
+    filter(fold==i)
+  
+  ### INNER LOOP FOR POLY DEGREE
+  k <- 1:15 #k-th order
+  
+  for (j in 1:length(k)){
+    row<-length(k)*(i-1)+j
+    
+    # build models
+    model <- lm(target_deathrate ~ poly(medincome,k[j]), data = trainDat)
+    
+    # calculate RSME and store it for further usage
+    RMSE[row,1] <-i
+    RMSE[row,2] <- k[j] # store k-th order
+    RMSE[row,3] <- sqrt(sum((fitted(model)-trainDat$target_deathrate)^2)/length(trainDat$target_deathrate)) # calculate RSME
+    
+    predTest<-predict(model, testDat)
+    
+    RMSE[row, 4]<-sqrt(sum((predTest-testDat$target_deathrate)^2)/length(testDat$target_deathrate)) # calculate RSME
+    
+  }
+}
+
+
+ggplot(RMSE, aes(x=kth.order, y=RMSE, color=as.factor(fold)))+
+  geom_line()+
+  geom_point()+
+  ggtitle("Training RMSE")
+```
