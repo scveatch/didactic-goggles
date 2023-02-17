@@ -17,7 +17,7 @@ library(ggplot2)
 library(tidyverse)
 library(caret)
 library(mgcv)
-library(mgcViz)
+library(mgcViz) # This is a great package for visualizing GAMS.
 ```
 
 ## Import Dataset
@@ -98,7 +98,7 @@ count(cancer1, over10pctblack)
 ```
 Well, it seems like there aren't many counties in this country where over 10% of a county is black. Let's still see if there's any significance. 
 
-```{r}
+```{r message = FALSE}
 # Create a ggpairs plot colored along 
 ggpairs(cancer1, columns = c(4, 6, 11, 24),
        ggplot2::aes(color = over10pctblack))
@@ -130,6 +130,8 @@ train_indexes <- sample(seq_len(nrow(cancer1)), size = smpl_size, replace = FALS
 train <- cancer1[train_indexes, ]
 test <- cancer1[-train_indexes, ]
 ```
+
+
 ## Fit Linear Model
 
 ```{r}
@@ -140,10 +142,18 @@ plot(mod1)
 
 Well that just looks like a nasty fit. Only a 19.65% R-squared!
 
+## Ploted Linear Model
+```{r}
+ggplot(data = train, aes(x = medincome, y = target_deathrate)) + 
+  geom_point(alpha = .5) + 
+  geom_smooth(method = "lm", se = FALSE)
+```
+Clearly, this isn't doing a very good job keeping everything in line. Let's try a parallel lines model.
+
 
 ## Parallel Lines Model
 ```{r}
-mod2 <- lm(data = train, target_deathrate ~ medincome + train$over)
+mod2 <- lm(data = train, target_deathrate ~ medincome + over10pctblack)
 summary(mod2)
 mod2$coefficients
 ```
@@ -152,30 +162,70 @@ mod2$coefficients
 ggplot(data= train, aes(x= medincome, y= target_deathrate, color = train$over10pctblack))+
   geom_point(alpha = .5)+
   geom_abline(intercept=mod2$coefficients[1]+mod2$coefficients[3], 
-              slope=mod2$coefficients[2], color="blue")+
+              slope=mod2$coefficients[2], color="turquoise")+
   geom_abline(intercept=mod2$coefficients[1], 
               slope=mod2$coefficients[2], color="red")
 ```
+
+# Multiple Linear Regression
+```{r}
+mod3 <- lm(target_deathrate ~ medincome * over10pctblack, data = train)
+summary(mod3)
+
+# Define Coefficients
+yint_0<-mod3$coefficients[1]
+slope_0<-mod3$coefficients[2]
+yint_1<-mod3$coefficients[1]+mod3$coefficients[3]
+slope_1<-mod3$coefficients[2]+mod3$coefficients[4]
+
+# Plot Multiple Linear Regression
+ggplot(data = train, aes(x = medincome, y = target_deathrate, color = over10pctblack)) + 
+  geom_point(alpha = .5) + 
+  geom_smooth(method = "lm", se = FALSE)
+
+# Second of the same plot, with lines extended to exaggerate intersecting nature
+ggplot(data = train, aes(x = medincome, y = target_deathrate, color = over10pctblack))+
+  geom_point()+
+  geom_abline(intercept=yint_1, 
+              slope=slope_1, color="blue")+
+  geom_abline(intercept=yint_0, 
+              slope=slope_0, color="red")
+```
+This looks very similar to the parallel lines plot above. Regardless, it isn't giving the best possible description of our data, so we probably need to adjust our approach a little bit. We'll do that over the coming assignments with some more careful variable selection and feature tuning. 
+
+## Compare Model Performance
+```{r}
+testmod1 <- predict(mod1, test)
+print("testmod1")
+print(RMSE(testmod1, test$target_deathrate))
+testmod2 <- predict(mod2, test)
+print("testmod2")
+print(RMSE(testmod2, test$target_deathrate))
+testmod3 <- predict(mod3, test)
+print("testmod3")
+print(RMSE(testmod3, test$target_deathrate))
+```
+Like I said above, these aren't the best models to be using, and we need to make some adjustments as to which variables we select to explain much of the error we've visualized. For this assignment, however, it was more feasible to keep going rather than backtrack as the clock wound down. 
 
 ### Milestone #3
 
 # Polynomial
 ```{r}
 m5 <- lm(target_deathrate~poly(medincome, 5), data = train)
-
+summary(m5)
 ggplot(train, aes(x=medincome, y=target_deathrate))+
-  geom_point()+
-  geom_line(aes(y=m2$fitted.values), color="yellow", size=1)+
+  geom_point(alpha = .5)+
+  geom_line(aes(y=m5$fitted.values), color="yellow", size=1)+
   ggtitle("Degree 5")
 ```
 
 # GAM
 ```{r}
 M_Gam<-gam(target_deathrate~s(medincome), data = train)
-#summary(M_Gam)
+summary(M_Gam)
 
 ggplot(train, aes(x=medincome, y=target_deathrate))+
-  geom_point()+
+  geom_point(alpha = .5)+
   geom_line(aes(y=M_Gam$fitted.values), color="red", size=1)+
   geom_line(aes(y=m5$fitted.values), color="blue", size=1)+
   ggtitle("GAM Model (Red) vs Poly 3 (Blue)")
@@ -186,7 +236,7 @@ ggplot(train, aes(x=medincome, y=target_deathrate))+
 L1<-loess(target_deathrate~medincome, data = train)
 
 ggplot(train, aes(x=medincome, y=target_deathrate))+
-  geom_point()+
+  geom_point(alpha = .5)+
   geom_line(aes(y=predict(L1)), color="green", size=1)
 ```
 
