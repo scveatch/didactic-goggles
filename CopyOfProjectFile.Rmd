@@ -1,0 +1,592 @@
+---
+title: "Project File"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-02-01"
+authors: "Spencer Veatch, Eric Kaszycki, Charlie Wiebe"
+---
+
+Authors: Spencer Veatch, Eric Kaszycki, Charlie Wiebe (for some reason, the YAML wasn't cooperating.)
+
+## Install Packages
+
+```{r message = FALSE}
+#install.packages("GGally")
+#install.packages("tidyverse")
+#install.packages("caret")
+#install.packages("mgcv")
+#install.packages("mgcViz")
+#install.packages("ggplot2")
+#install.packages("faraway")
+#install.packages("corrplot")
+#install.packages("car")
+#install.packages("leaps")
+#install.packages("ranger")
+#install.packages("rpart")
+#install.packages("rpart.plot")
+#install.packages(("lmtest"))
+library(lmtest)
+library(rpart)
+library(rpart.plot)
+library(ranger)
+library(leaps)
+library(car)
+library(corrplot)
+library(faraway)
+library(GGally)
+library(ggplot2)
+library(tidyverse)
+library(caret)
+library(mgcv)
+library(mgcViz) # This is a great package for visualizing GAMS.
+```
+
+## Import Dataset
+
+```{r}
+# Import data 
+cancer <- read.csv('https://raw.github.com/scveatch/didactic-goggles/main/cancer_reg.csv')
+
+# Display first 5 rows.
+head(cancer, 5)
+```
+
+## Dataset Description
+
+As an aside, it seems that github is taking a really long time in updating the raw with committed changes. Hopefully that bug gets worked out soon -- as a test, I've commited a 21st row in the repository with the values "Hello;" "Hello;" that will hopefully pop up in the next pull. This feature will be necessary to keep full transparency when we create new columns.
+
+-   Update -- 2/11 (12:30); It looks like it updated properly, but we should keep the delay in mind.
+
+```{r}
+# Create a dataset of Column Name and related Description
+Information_df = read.table("https://raw.github.com/scveatch/didactic-goggles/main/Descriptions", header = TRUE, sep = ";")
+
+view(Information_df[, -3]) # remove erroneous 3rd column.
+```
+
+## Preliminary Analysis
+
+```{r}
+# View the dataset structure
+str(cancer)
+```
+
+As a general rule, this data seems very clean! Note that Binned Income is a "chr" variable, however, this won't need to be changed. Binned Income is a categorical variable, we won't need to make it numeric to use it. We will need to factor it though! However, there do seem to be a few features with missing values that ought to be further examined.
+
+# Count Missing Values
+
+```{r}
+# Count Missingness
+
+# Initialize Empty Dataset
+missing_values_per_col <- data.frame(
+  "Column_Name" = character(),
+  "Num_Missing" = double(),
+  "Total_Values" = double()
+)
+
+# Sum Missing Values for Each Column
+for (i in 1:ncol(cancer)) {
+  x = c(colnames(cancer))
+  new <- c(x[i], sum(is.na(cancer[, i])), length(cancer[, i]))
+  missing_values_per_col[nrow(missing_values_per_col) + 1, ] <- new
+}
+
+missing_values_per_col
+```
+
+As we can see pretty clearly from this dataframe, the feature "pctsomecol18_24" is about 75% ommitted, and therefore should not be considered in any analysis without heavy caution. The feature "pctprivatecoveragealone" also has a significant amount omitted, about 20%, which should be noted. I'll most likely remove these from the analysis.
+
+## Filter Dataset to Oregon
+
+There's no reason to use this just yet, but nonetheless, I'm making it because I think we may fall back to it sometime in the future, either for analysis or experimentation with a smaller dataset.
+
+```{r}
+oregon <- cancer %>%
+  filter(grepl("Oregon", geography))
+oregon <- oregon[-37,] # remove one erroneous value from Oregon County, Missouri
+```
+
+# Change binned income to factor
+
+```{r}
+cancer1 <- cancer
+cancer1$binnedinc <- factor(cancer1$binnedinc, levels = c("[22640, 34218.1]","(34218.1, 37413.8]", "(37413.8, 40362.7]", "(40362.7, 42724.4]", "(42724.4, 45201]", "(45201, 48021.6]", "(48021.6, 51046.4]", "(51046.4, 54545.6]", "(54545.6, 61494.5]", "(61494.5, 125635]"))
+
+# Change geography to factor
+cancer1$geography <- factor(cancer1$geography)
+
+# Plot binned income boxplot
+ggplot(data = cancer1, aes(x = binnedinc, y = target_deathrate, color = binnedinc)) + 
+  geom_boxplot(outlier.color = "Red", outlier.shape = 18, outlier.fill = "Red") + 
+  coord_flip() +
+  theme_linedraw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.position = "none")
+```
+
+First, I've factored binned income so that we have a way to use it plotting and analysis. This plot shows something interesting right off the bat -- as a hard and fast rule, individuals with lower binned incomes have higher target deathrates, and vice versa. Maybe we want to explore this later...
+
+## Adjust Median Age
+
+So, it looks like there are some values in median age which are horribly wrong. Any county with a median age above 90 is filled with antediluvian specimens -- and some of these counties are reporting a median age in the 500s! It doesn't look like it was just a mistake in data entry either; for example, Seward County Nevada has a median male age of 36.3, and a median female age of 40.7, and their reported median age is 458.4. Even if this is a case of a misplaced decimal, their median age would be 45.84, which is higher than both their median male and female ages and really makes no sense. So, for values like this, I've taken the median of the male and female age medians and used this value to replace that county's median age.
+
+```{r}
+# Adjust Median Age
+for (i in 1:nrow(cancer1)){
+  if (cancer1[i,]$medianage > 90){
+    cancer1[i,]$medianage <- median(cancer1[i,]$medianagemale, cancer1[i,]$medianagefemale)
+  }
+}
+
+summary(cancer1$medianage) # double check our work here...
+```
+
+# Create over10pctblack var
+
+We'll want to make a categorical variable with the percent of black people in a county. Let's set the line of demarcation to be 10%. Domain knowledge makes it seem logical that "black" counties would likely have higher target deathrates, and we may want to look at that more in the future!
+
+```{r}
+# Create true/false col in cancer1
+cancer1$over10pctblack = as.factor(
+    ifelse(cancer$pctblack >= 10, 1, 0) # set value to "1" if pctblack >= 10, else "0".
+  )
+
+# Count the number of counties over/under 10% black
+count(cancer1, over10pctblack)
+```
+
+Well, it seems like there aren't many counties in this country where over 10% of a county is black. We'll still take a look at it.
+
+# Let's Look at what we have
+
+This is open data from the federal government on incidence and mortality rate. From an inference perspective (which is only tangential to the overall regression project), it would be nice to understand why low income groups are at a greater risk of dying from cancer. We can state that it's the case right now -- the boxplot does a good job of that -- but we can't do much more than take educated guesses at why.
+
+From a regression standpoint, the primary focus is on building a model which can accurately predict the target_deathrate of a county based on some number of features.
+
+What we're looking at is whether or not low income groups are at greater risk of being diagnosed and dying from cancer. From the boxplot above, that's already pretty clear. Let's see now if we can find variables to accurately predict the target_deathrate of a county.
+
+# Remove extraneous features
+
+```{r}
+cancer2 <- cancer1[, -c(14, 1, 12, 13, 18, 25, 33, 19, 25)] # remove redundant features
+head(cancer1[, c(14, 1, 12, 13, 18, 25, 33, 19, 25)])
+```
+
+The features I removed are features which are either redundant or features which are factors; I've printed a head of the removed features above so we are for clarity's sake.
+
+## Split Data into Train and Test sets
+
+```{r}
+set.seed(1729) # Points if you know the significance of this number!
+
+# Create with Factor Variables
+smpl_size <- floor(.7 * nrow(cancer2)) # create a 70 - 30 split
+train_indexes <- sample(seq_len(nrow(cancer2)), size = smpl_size, replace = FALSE)
+train <- cancer2[train_indexes, ]
+test <- cancer2[-train_indexes, ]
+```
+
+# Variable Selection
+
+The first thing I want to do is identify possible collinearity, or multicollinearity! This can be best done with a correlation plot of all the features in our dataset, as shown below.
+
+```{r}
+correlation <- cor(na.omit(cancer2[, -c(9, 27)])) #Remove factor variables
+corrplot(correlation, method = "circle", tl.cex = .5, number.cex = .4, type = "lower")
+head(cancer2[, c(9, 27)]) # proof of removed vars
+```
+
+It looks like there are some independent variables that are interacting with each other. We can clearly explain some of them, like the positive relationship between population and average deaths per year, or the positive relationship between median income vs percent of individuals with private healthcare coverage (assuming they have a significant p-value, of course). However, we want to be careful not to introduce colinearity to any of our models!
+
+Let's fit a linear model to everything and see what that tells us.
+
+```{r}
+model1 <- lm(target_deathrate ~ (.)^2, data = train) # again, removing categorical vars and omitting na values
+#anova(model1)
+#model2 <- lm(target_deathrate ~ ., data = train)
+#summary(model2)
+#plot(model2)
+#vif(model1)
+plot(model1)
+summary(model1)
+#durbinWatsonTest(model1)
+#ncvTest(model1)
+
+```
+
+Throwing in the kitchen sink is giving us everything -- of course $R^2$ is going to improve (we hit .683)! Essentially, we're fitting to noise. Yay. Even fitting to noise, however, we don't get all that great of a fit to the training data! Considering that we're smashing everything + all interactions to the second degree together in a model, we would expect it to have a pretty high $R^2$
+
+Let's do the same thing, but with no interactions.
+
+# Linear Model, No Interactions.
+
+```{r}
+model2 <- lm(target_deathrate ~ ., data = train) # include over10pctblack factor
+summary(model2)
+plot(model2)
+```
+
+Understandably, our $R^2$ value took a pretty big hit, we're no longer fitting to just noise! Now, let's see what we can do to improve. First, let's try some variable selection:
+
+# Variable Selection
+
+```{r}
+# Backward Model w/ Interaction
+model.bkwrd <- regsubsets(target_deathrate ~ (.)^2, data = train, nvmax = 50, method = "backward")
+sum_bkwrd <- summary(model.bkwrd)
+
+# Forward Model w/ Interaction
+model.frwd <- regsubsets(target_deathrate ~ (.)^2, data = train, nvmax = 50, method = "forward")
+sum_frwd <- summary(model.frwd)
+
+# Backward Model w/o Interaction
+nointmodel <- regsubsets(target_deathrate ~ ., data = train, nvmax = 50, method = "backward")
+sum_noint <- summary(nointmodel)
+
+# Backward
+plot(sum_bkwrd$bic, xlab = "number of variables", ylab = "BIC", type = "l", main = "Backward Model w/ Interaction")
+bic_min <- which.min(sum_bkwrd$bic)
+points(bic_min, sum_bkwrd$bic[bic_min],  col = "red", cex = 2, pch = 20)
+plot(model.bkwrd, scale = "bic")
+
+# Forward
+plot(sum_frwd$bic, xlab = "number of variables", ylab = "BIC", type = "l", main = "Forward Model w/ Interaction")
+bic_minf <- which.min(sum_frwd$bic)
+points(bic_minf, sum_frwd$bic[bic_minf],  col = "red", cex = 2, pch = 20)
+plot(model.frwd, scale = "bic")
+
+# no interaction model
+plot(sum_noint$bic, xlab = "number of variables", ylab = "BIC", type = "l", main = "Best Subset NO Interaction")
+bic_minnoint <- which.min(sum_noint$bic)
+points(bic_minnoint, sum_noint$bic[bic_minnoint],  col = "red", cex = 2, pch = 20)
+plot(nointmodel, scale = "bic")
+
+length(coef(model.frwd, bic_minf))
+print(sum_bkwrd$bic[bic_min])
+length(coef(model.bkwrd, bic_min))
+print(sum_frwd$bic[bic_minf])
+#coef(model.frwd, bic_minf)
+coef(nointmodel, bic_minnoint)
+print(sum_noint$bic[bic_minnoint])
+```
+
+This scales down our model a bit. This block of code is 3 things -- a forward and backward stepwise selection of all model terms including second degree interactions, and a backward stepwise selection of model terms with no interaction specified.
+
+-   The interaction model with backward selection produces a relatively middling BIC of approximately $-1525$, and only uses 26 variables (remember that the output in the console includes the intercept, so variables == output - 1). That doesn't seem TOO bad, but let's keep looking.
+
+-   The interaction model with forward selection produces a slightly improved BIC of approximately $-1451$, but uses 33 variables. That doesn't seem great to me either.
+
+-   The model with no interactions produces a BIC of approximately $-1321$ with 8 variables. This clearly has an improved BIC over the first model, however, collinearity worries me. Its coefficients have some nasty values in that correlation plot above -- poverty percent and pctprivatecoverage are inversely correlated to a strong degree, same thing with the percent of individuals with a bachelors degree.'
+
+Let's check the VIF, just to be safe.
+
+# Check VIF
+
+```{r}
+vif(lm(data = train, target_deathrate ~ incidencerate + povertypercent + pcths18_24 + pctbachdeg25_over + pctprivatecoverage + pctempprivcoverage + pctotherrace + birthrate))
+```
+
+We got some good values from this! There are only three values that I think warrant some investigation: povertypercent, pctprivatecoverage, and pctempprivcoverage. Overall, strong variables! Pctprivatecoverage's high VIF is rather easy to explain -- it is inversely correlated with poverty percent.
+
+```{r}
+model3 <- lm(data = train, target_deathrate ~ incidencerate + povertypercent + pcths18_24 + pctbachdeg25_over + pctprivatecoverage + pctempprivcoverage + pctotherrace + birthrate )
+summary(model3)
+plot(model3)
+bptest(model3)
+durbinWatsonTest(model3)
+```
+
+The residual vs fitted plot should be random and uhhhhh... it's most certainly not! The scale vs location plot should also be random and the line should be horizontal. It's pretty clear from the plot that we don't meet linear assumptions, but just in case you were doubtful of that conclusion, here's a BP test. Bp tests have a null hypothesis where homoscedasticity is present (residuals have a distribution with equal variance). A p-value of under .05 rejects this hypothesis, proving the alternative: heteroscedasticity is present in the model. We got the smallest output R can give us, so we can strongly confirm that our model results (and therefore predictions) are unreliable.
+
+# Predicted vs Actual Plot
+
+```{r}
+# Produce predicted vs actual separated by income
+ggplot(data = test, aes(x = predict(model3, test), y = test$target_deathrate, color = binnedinc)) + 
+  geom_point(alpha = .5) + 
+  geom_abline(intercept = 0, slope = 1) + # create 45 degree angle line
+  labs(x = "Predicted Values", y = "Actual Values", title = "Predicted vs Actual Values, Linear Model 3") + 
+  facet_wrap(vars(binnedinc))
+
+test_prediction <- predict(model3, test)
+print(RMSE(test_prediction, test$target_deathrate))
+
+# Let's also produce a predicted vs actual df
+mod3_prediction_df <- as.data.frame(test$target_deathrate)
+mod3_prediction_df <- mod3_prediction_df %>%
+  mutate(predictions = predict(model3, test))
+head(mod3_prediction_df, 10)
+```
+
+Yeach, it's pretty clear that this isn't our best model. Here's a couple more graphs as backups, but let's move on to a tree to see if we can get a better model output.
+
+# Component plus Residual Plots
+
+```{r}
+crPlots(model3)
+```
+
+# Trees (WE NEED TO MOVE THIS!!!!!!!)
+
+```{r}
+tree1 <- rpart(
+  target_deathrate ~ ., 
+  data = train, 
+  method = "anova"
+)
+rpart.plot(tree1)
+```
+
+## ggpairs Plot
+
+```{r message = FALSE}
+# Create a ggpairs plot colored along 
+ggpairs(cancer2, columns = c(4, 6, 11, 24),
+       ggplot2::aes(color = over10pctblack))
+head(cancer2)
+```
+
+Well, it's not immediately clear that there are two fully separate groups here, but this plot does reveal some important facts. The first plot makes clear that the target deathrate for counties over 10% black is slightly higher than other counties. Similarly, we notice median income and the percent with private healthcare coverage are slightly lower for counties \> 10% black. Further analysis is required, but we should keep in mind that a link between private healthcare coverage and target deathrate is likely to exist.
+
+```{r message = FALSE, warning = FALSE}
+ggpairs(train, columns = c(4, 5, 8, 13, 15, 18, 19, 24, 25),
+        lower = list(continuous = wrap("smooth", method = "loess", color = "red",  alpha = .5)))
+
+?ggpairs
+```
+
+The variables used in this plot were selected in the "Variable Selection" tab above. This plot simply provides a density plot with a loess smooth on the points to illustrate the non-linearity and highlight some features which may need to be transformed to fit a model well. I choose these variables because in my experience, GAMs have not handled interactions very well and that's where I'm headed next! (As an aside, I tried fitting with method = "gam", but ggpairs interpreted it as making a GLM because I couldn't find a way to specify the smooth. Loess works just as well for it's purposes here, but I'd like to see if I can get a GAM in there instead.)
+
+# Potential Problem - studypercap var & pctotherrace
+
+```{r}
+hist(cancer2$studypercap)
+hist(log(cancer2$studypercap + 1))
+```
+
+Study per capita looks interesting here. I'm not sure how to deal with this variable right now, but it looks like there are SO many zeros that transformation isn't going to work without trying to replace values and such. I think I'm going to remove it from consideration and run a secondary test with it forced out.
+
+```{r}
+hist(cancer2$pctotherrace)
+hist(log(cancer2$pctotherrace + 1))
+```
+
+Same thing as above right here. Transformation isn't getting us where we need to be for an easy analysis.
+
+Right now, let's focus on a GAM and let these lie for a bit.
+
+# GAM
+
+For starters, we're going to fit everything all at once, even though this is generally a bad idea. I do this because I want to get a general sense of what the GAM thinks is significant
+
+```{r}
+model4 <- mgcv::gam(
+  as.formula(
+    paste0(
+      "target_deathrate ~ s(",
+      setdiff(names(train), "target_deathrate") %>% paste0(collapse = ") + s("), 
+      ")"
+    )
+  ),
+  data = train, method = "REML", select = TRUE
+)
+summary(model4)
+gam.check(model4)
+?gam.check
+```
+
+As an aside, I really dislike that mgcv doesn't have a way to blanket all variables in the style of lm(y ~ . ). This process took way too long to perfect, AND is quite confusing to look at! Ew.
+
+# LOESS
+
+```{r}
+model5 <- loess(data = train, target_deathrate ~ incidencerate + pctblack + pctnohs18_24)
+summary(model5)
+```
+
+# Random Forest
+
+```{r}
+# Remove data with na values
+x <- subset(train, select = -c(pctemployed16_over))
+formula <- paste("target_deathrate", "~", paste(names(x), collapse = " + "))
+model6 <- ranger(formula, data = x, num.trees = 500, respect.unordered.factors = "order", importance = )
+print(model6)
+ranger::importance(model6)
+?ranger
+```
+
+## Fit Linear Model
+
+```{r}
+mod1 <- lm(data = train, target_deathrate ~ medincome)
+summary(mod1)
+plot(mod1)
+```
+
+Well that just looks like a nasty fit. Only a 19.65% R-squared!
+
+## Ploted Linear Model
+
+```{r}
+ggplot(data = train, aes(x = medincome, y = target_deathrate)) + 
+  geom_point(alpha = .5) + 
+  geom_smooth(method = "lm", se = FALSE)
+```
+
+Clearly, this isn't doing a very good job keeping everything in line. Let's try a parallel lines model.
+
+## Parallel Lines Model
+
+```{r}
+mod2 <- lm(data = train, target_deathrate ~ medincome + over10pctblack)
+summary(mod2)
+mod2$coefficients
+```
+
+# Visualize Parallel Lines
+
+```{r}
+ggplot(data= train, aes(x= medincome, y= target_deathrate, color = train$over10pctblack))+
+  geom_point(alpha = .5)+
+  geom_abline(intercept=mod2$coefficients[1]+mod2$coefficients[3], 
+              slope=mod2$coefficients[2], color="turquoise")+
+  geom_abline(intercept=mod2$coefficients[1], 
+              slope=mod2$coefficients[2], color="red")
+```
+
+# Multiple Linear Regression
+
+```{r}
+mod3 <- lm(target_deathrate ~ medincome * over10pctblack * medianage, data = train)
+summary(mod3)
+
+# Define Coefficients
+yint_0<-mod3$coefficients[1]
+slope_0<-mod3$coefficients[2]
+yint_1<-mod3$coefficients[1]+mod3$coefficients[3]
+slope_1<-mod3$coefficients[2]+mod3$coefficients[4]
+
+# Plot Multiple Linear Regression
+ggplot(data = train, aes(x = medincome, y = target_deathrate, color = over10pctblack)) + 
+  geom_point(alpha = .5) + 
+  geom_smooth(method = "lm", se = FALSE)
+
+# Second of the same plot, with lines extended to exaggerate intersecting nature
+ggplot(data = train, aes(x = medincome, y = target_deathrate, color = over10pctblack))+
+  geom_point()+
+  geom_abline(intercept=yint_1, 
+              slope=slope_1, color="blue")+
+  geom_abline(intercept=yint_0, 
+              slope=slope_0, color="red")
+```
+
+This looks very similar to the parallel lines plot above. Regardless, it isn't giving the best possible description of our data, so we probably need to adjust our approach a little bit. We'll do that over the coming assignments with some more careful variable selection and feature tuning.
+
+## Compare Model Performance
+
+```{r}
+testmod1 <- predict(mod1, test)
+print("testmod1")
+print(RMSE(testmod1, test$target_deathrate))
+testmod2 <- predict(mod2, test)
+print("testmod2")
+print(RMSE(testmod2, test$target_deathrate))
+testmod3 <- predict(mod3, test)
+print("testmod3")
+print(RMSE(testmod3, test$target_deathrate))
+```
+
+Like I said above, these aren't the best models to be using, and we need to make some adjustments as to which variables we select to explain much of the error we've visualized. For this assignment, however, it was more feasible to keep going rather than backtrack as the clock wound down. The lowest RMSE was, by the smallest margin imaginable, the model which included multiple linear regression.
+
+### Milestone #3
+
+# Polynomial
+
+```{r}
+m5 <- lm(target_deathrate~poly(medincome, 5), data = train)
+summary(m5)
+ggplot(train, aes(x=medincome, y=target_deathrate))+
+  geom_point(alpha = .5)+
+  geom_line(aes(y=m5$fitted.values), color="yellow", size=1)+
+  ggtitle("Degree 5")
+```
+
+# GAM
+
+```{r}
+M_Gam<-gam(target_deathrate~s(medincome), data = train)
+summary(M_Gam)
+
+ggplot(train, aes(x=medincome, y=target_deathrate))+
+  geom_point(alpha = .5)+
+  geom_line(aes(y=M_Gam$fitted.values), color="red", size=1)+
+  geom_line(aes(y=m5$fitted.values), color="blue", size=1)+
+  ggtitle("GAM Model (Red) vs Poly 3 (Blue)")
+```
+
+# Loess
+
+```{r}
+L1<-loess(target_deathrate~medincome, data = train)
+
+ggplot(train, aes(x=medincome, y=target_deathrate))+
+  geom_point(alpha = .5)+
+  geom_line(aes(y=predict(L1)), color="green", size=1)
+```
+
+# k-fold CV
+
+```{r}
+
+# for commonality using 5
+kf<-5
+
+ind<-sample(1:150)
+
+folds<-data.frame(ind, 
+                  fold=rep(1:kf, 150/kf))
+
+### ADD ON COLUMNS TO ORIGINAL DAT
+foldPoly<-train[ind,]%>%
+  cbind(folds)
+
+### INITIALIZE RMSE DATAFRAME TO HOLD OUTPUT
+RMSE <- data.frame('fold' = NA, 'kth.order' = NA, 'RMSE' = NA, 'TestRMSE'=NA) # empty data frame to store RMSE
+
+### LOOP FOR CROSS-VALIDATION
+for(i in 1:kf){
+  trainDat<-foldPoly%>%
+    filter(fold!=i)
+  
+  testDat<-foldPoly%>%
+    filter(fold==i)
+  
+  ### INNER LOOP FOR POLY DEGREE
+  k <- 1:15 #k-th order
+  
+  for (j in 1:length(k)){
+    row<-length(k)*(i-1)+j
+    
+    # build models
+    model <- lm(target_deathrate ~ poly(medincome,k[j]), data = trainDat)
+    
+    # calculate RSME and store it for further usage
+    RMSE[row,1] <-i
+    RMSE[row,2] <- k[j] # store k-th order
+    RMSE[row,3] <- sqrt(sum((fitted(model)-trainDat$target_deathrate)^2)/length(trainDat$target_deathrate)) # calculate RSME
+    
+    predTest<-predict(model, testDat)
+    
+    RMSE[row, 4]<-sqrt(sum((predTest-testDat$target_deathrate)^2)/length(testDat$target_deathrate)) # calculate RSME
+    
+  }
+}
+
+
+ggplot(RMSE, aes(x=kth.order, y=RMSE, color=as.factor(fold)))+
+  geom_line()+
+  geom_point()+
+  ggtitle("Training RMSE")
+```
