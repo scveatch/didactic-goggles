@@ -70,9 +70,12 @@ view(Information_df[, -3]) # remove erroneous 3rd column.
 ```{r}
 # View the dataset structure
 str(cancer)
+summary(cancer)
 ```
 
 As a general rule, this data seems very clean! Note that Binned Income is a "chr" variable, however, this won't need to be changed. Binned Income is a categorical variable, we won't need to make it numeric to use it. We will need to factor it though! However, there do seem to be a few features with missing values that ought to be further examined.
+
+I also want to call attention to some of the variability in this dataset. This is going to make it hard to get a high $R^2$ -- I'll make a few graphical representations to make this clearer in the coming days, but as a general rule, we shouldn't expect to get anything like .85. You'll notice in the following models that we have significant independent variables, but average an $R^2$ value of about .5.  I can only assume this is due to nosiy data, as when we overfit some models, our training $R^2$ value didn't get above .8. I'll continue to look into it. 
 
 # Count Missing Values
 
@@ -192,12 +195,14 @@ test <- cancer2[-train_indexes, ]
 The first thing I want to do is identify possible collinearity, or multicollinearity! This can be best done with a correlation plot of all the features in our dataset, as shown below.
 
 ```{r}
-correlation <- cor(na.omit(cancer2[, -c(9, 27)])) #Remove factor variables
+correlation <- cor(na.omit(cancer2[, -c(9, 11, 28)])) #Remove factor variables
 corrplot(correlation, method = "circle", tl.cex = .5, number.cex = .4, type = "lower")
-head(cancer2[, c(9, 27)]) # proof of removed vars
+head(cancer2[, c(9, 11, 28)]) # proof of removed vars
 ```
 
 It looks like there are some independent variables that are interacting with each other. We can clearly explain some of them, like the positive relationship between population and average deaths per year, or the positive relationship between median income vs percent of individuals with private healthcare coverage (assuming they have a significant p-value, of course). However, we want to be careful not to introduce colinearity to any of our models!
+
+As an aside, if I have time I intend to one-hot encode my factor values so we can include them in the correlation plot. Since I'm pressed for time and this is a class project that doesn't have real-world impact, I'm okay skipping it for now.
 
 Let's fit a linear model to everything and see what that tells us.
 
@@ -353,7 +358,6 @@ Well, it's not immediately clear that there are two fully separate groups here, 
 ggpairs(train, columns = c(4, 5, 8, 13, 15, 18, 19, 24, 25),
         lower = list(continuous = wrap("smooth", method = "loess", color = "red",  alpha = .5)))
 
-?ggpairs
 ```
 
 The variables used in this plot were selected in the "Variable Selection" tab above. This plot simply provides a density plot with a loess smooth on the points to illustrate the non-linearity and highlight some features which may need to be transformed to fit a model well. I choose these variables because in my experience, GAMs have not handled interactions very well and that's where I'm headed next! (As an aside, I tried fitting with method = "gam", but ggpairs interpreted it as making a GLM because I couldn't find a way to specify the smooth. Loess works just as well for it's purposes here, but I'd like to see if I can get a GAM in there instead.)
@@ -398,10 +402,10 @@ gam.check(model4)
 
 As an aside, I really dislike that mgcv doesn't have a way to blanket all variables in the style of lm(y ~ . ). This process took way too long to perfect, AND is quite confusing to look at! Ew.
 
-# LOESS
+# GAM
 
 ```{r}
-model5 <- loess(data = train, target_deathrate ~ incidencerate + pctblack + pctnohs18_24)
+model5 <- gam(data = train, target_deathrate ~ s(incidencerate) + s(pctbachdeg25_over) + s(pcths25_over) + s(medincome) + s(povertypercent), method = "REML")
 summary(model5)
 ```
 
@@ -409,13 +413,87 @@ summary(model5)
 
 ```{r}
 # Remove data with na values
-x <- subset(train, select = -c(pctemployed16_over))
-formula <- paste("target_deathrate", "~", paste(names(x), collapse = " + "))
-model6 <- ranger(formula, data = x, num.trees = 500, respect.unordered.factors = "order", importance = )
+x <- subset(train, select = -c(pctemployed16_over)) # has NA values
+
+# Make Forest
+model6 <- ranger(target_deathrate ~ ., data = x, num.trees = 500, importance = "impurity")
+
+# Examine Importance
+ranger::importance(model6) %>% tibble::enframe(name = "Var", value = "Importance") %>% arrange(desc(Importance))
+
 print(model6)
-ranger::importance(model6)
-?ranger
 ```
+I considered imputation for pctemployed16_over, but there really isn't a good way to make it up. There aren't other variables which could stand as an indicator, nor is there data collected from which we can make sound logical conclusions. Removal is easier, for the time being at least. 
+
+This random forest got us pretty good results! Let's look at the importance results first. 
+
+```{r}
+rangerpred <- predict(model6, test)
+yhat <- rangerpred$predictions
+actual <- test$target_deathrate
+rmse_ranger <- sqrt(mean((yhat-actual)^2))
+rmse_ranger
+```
+Print out RMSE, we'll improve $R^2$ and hopefully RMSE after some tuning. 
+
+# Random Forest Grid Search
+Clearly, will need to finish the work in this section...
+```{r}
+hyper_grid_rf <- expand.grid(
+  mtry = seq(2, 25, by = 1)
+  node_size = 
+)
+
+nrow(cancer2)
+```
+
+# Jackknife Cross Validation
+
+I tried getting this to work, and it crashed Posit Cloud. Ten times. Even when nothing else was running on my machine. No errors, just kept crashing. Sooooooooo... I'm doing a work-around.
+```{r}
+# Prediction Function
+predict.regsubsets <- function(object, newdata, id,...){
+  form  <- as.formula(object$call[[2]])
+  mat   <- model.matrix(form, newdata)
+  coefi <- coef(object, id=id)
+  mat[, names(coefi)]%*%coefi
+}
+
+jk.errors <- matrix(NA, 3047, 10) # Length 3047, 28 vars total
+
+for (k in 1:2895){
+  best.model.cv <- regsubsets(
+    target_deathrate ~ ., 
+    data = na.omit(cancer2[-k, ]),
+    nvmax = 10
+  )
+  for (i in 1:28){
+    pred <- predict.regsubsets(
+      na.omit(cancer2[-k, ]), 
+      id = i
+    )
+    jk.errors[k, i] <-  (na.omit(cancer2)$target_deathrate[k]-pred)^2
+  }
+}
+
+mse.models <- apply(jk.errors, 2, mean)            
+plot(mse.models ,                             
+     pch=19, type="b",
+     xlab="nr predictors",
+     ylab="MSE")
+```
+
+# Jackknife Cross Validation, Part 2!
+```{r}
+train.control <- trainControl(method = "LOOCV")
+
+cvmodel <- 
+```
+
+
+
+### All Previous Work Below This Line
+----------------------------------------------------------------------------
 
 ## Fit Linear Model
 
