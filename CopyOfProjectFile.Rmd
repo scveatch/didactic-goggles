@@ -26,6 +26,8 @@ Authors: Spencer Veatch, Eric Kaszycki, Charlie Wiebe (for some reason, the YAML
 #install.packages("rpart")
 #install.packages("rpart.plot")
 #install.packages(("lmtest"))
+#install.packages("glmnet")
+library(glmnet)
 library(lmtest)
 library(rpart)
 library(rpart.plot)
@@ -444,7 +446,6 @@ hyper_grid_rf <- expand.grid(
   node_size = 
 )
 
-nrow(cancer2)
 ```
 
 # Jackknife Cross Validation
@@ -459,7 +460,7 @@ predict.regsubsets <- function(object, newdata, id,...){
   mat[, names(coefi)]%*%coefi
 }
 
-jk.errors <- matrix(NA, 3047, 10) # Length 3047, 28 vars total
+jk.errors <- matrix(NA, 2895, 10) # Length 3047, 28 vars total
 
 for (k in 1:2895){
   best.model.cv <- regsubsets(
@@ -487,9 +488,39 @@ plot(mse.models ,
 ```{r}
 train.control <- trainControl(method = "LOOCV")
 
-cvmodel <- 
+cvmodel <- train(target_deathrate ~ ., data = na.omit(cancer2), method = "lm", trControl = train.control)
+print(cvmodel)
+
+?train
 ```
 
+
+# Lasso Regression
+I chose Lasso Regression for the following reason: I believe all the variables in this dataset have some importance, but that a small number of variables explain the majority of the variation. I know I have some multicollinearity in this model, the plot way up there shows that much, and I want to handle that without ruining interpretability (because let's face it, a random forest isn't interpretable at all!). Not to mention the built in quick-and-dirty feature selection is nice.
+```{r}
+model_eq <- model.matrix(target_deathrate ~ ., data = na.omit(cancer2))[, -1]
+
+outcome <- na.omit(cancer2)[, "target_deathrate"]
+
+lambda_lasso <- cv.glmnet(x= model_eq, y= outcome, 
+                             alpha = 1) 
+plot(lambda_lasso) 
+
+lambda_lasso
+```
+```{r}
+# Find Lasso min
+
+lasso_min <- lambda_lasso$lambda.min
+lasso_min
+
+final_lasso_model <- glmnet(
+  model_eq, outcome, alpha = 1, lambda = lasso_min
+)
+
+final_lasso_model$beta
+```
+ 
 
 
 ### All Previous Work Below This Line
