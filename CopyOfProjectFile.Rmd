@@ -1,8 +1,8 @@
 ---
 title: "Project File"
 output:
-  html_document: default
   pdf_document: default
+  html_document: default
 date: "2023-02-01"
 authors: "Spencer Veatch, Eric Kaszycki, Charlie Wiebe"
 ---
@@ -27,6 +27,8 @@ Authors: Spencer Veatch, Eric Kaszycki, Charlie Wiebe (for some reason, the YAML
 #install.packages("rpart.plot")
 #install.packages(("lmtest"))
 #install.packages("glmnet")
+#install.packages("broom")
+library(broom)
 library(glmnet)
 library(lmtest)
 library(rpart)
@@ -73,6 +75,7 @@ view(Information_df[, -3]) # remove erroneous 3rd column.
 # View the dataset structure
 str(cancer)
 summary(cancer)
+ncol(cancer)
 ```
 
 As a general rule, this data seems very clean! Note that Binned Income is a "chr" variable, however, this won't need to be changed. Binned Income is a categorical variable, we won't need to make it numeric to use it. We will need to factor it though! However, there do seem to be a few features with missing values that ought to be further examined.
@@ -186,7 +189,7 @@ The features I removed are features which are either redundant or features which
 set.seed(1729) # Points if you know the significance of this number!
 
 # Create with Factor Variables
-smpl_size <- floor(.7 * nrow(cancer2)) # create a 70 - 30 split
+smpl_size <- floor(.7 * nrow(cancer2)) # create a 50 - 50 split
 train_indexes <- sample(seq_len(nrow(cancer2)), size = smpl_size, replace = FALSE)
 train <- cancer2[train_indexes, ]
 test <- cancer2[-train_indexes, ]
@@ -197,9 +200,10 @@ test <- cancer2[-train_indexes, ]
 The first thing I want to do is identify possible collinearity, or multicollinearity! This can be best done with a correlation plot of all the features in our dataset, as shown below.
 
 ```{r}
-correlation <- cor(na.omit(cancer2[, -c(9, 11, 28)])) #Remove factor variables
+correlation <- cor(na.omit(cancer2[, -c(9, 11, 27)])) #Remove factor variables
 corrplot(correlation, method = "circle", tl.cex = .5, number.cex = .4, type = "lower")
-head(cancer2[, c(9, 11, 28)]) # proof of removed vars
+
+head(cancer2[, c(9, 11, 27)]) # proof of removed vars
 ```
 
 It looks like there are some independent variables that are interacting with each other. We can clearly explain some of them, like the positive relationship between population and average deaths per year, or the positive relationship between median income vs percent of individuals with private healthcare coverage (assuming they have a significant p-value, of course). However, we want to be careful not to introduce colinearity to any of our models!
@@ -219,7 +223,6 @@ plot(model1)
 summary(model1)
 #durbinWatsonTest(model1)
 #ncvTest(model1)
-
 ```
 
 Throwing in the kitchen sink is giving us everything -- of course $R^2$ is going to improve (we hit .683)! Essentially, we're fitting to noise. Yay. Even fitting to noise, however, we don't get all that great of a fit to the training data! Considering that we're smashing everything + all interactions to the second degree together in a model, we would expect it to have a pretty high $R^2$
@@ -239,6 +242,7 @@ Understandably, our $R^2$ value took a pretty big hit, we're no longer fitting t
 # Variable Selection
 
 ```{r}
+set.seed(1729)
 # Backward Model w/ Interaction
 model.bkwrd <- regsubsets(target_deathrate ~ (.)^2, data = train, nvmax = 50, method = "backward")
 sum_bkwrd <- summary(model.bkwrd)
@@ -269,7 +273,9 @@ bic_minnoint <- which.min(sum_noint$bic)
 points(bic_minnoint, sum_noint$bic[bic_minnoint],  col = "red", cex = 2, pch = 20)
 plot(nointmodel, scale = "bic")
 
+
 length(coef(model.frwd, bic_minf))
+#coef(model.frwd, bic_minf)
 print(sum_bkwrd$bic[bic_min])
 length(coef(model.bkwrd, bic_min))
 print(sum_frwd$bic[bic_minf])
@@ -280,13 +286,26 @@ print(sum_noint$bic[bic_minnoint])
 
 This scales down our model a bit. This block of code is 3 things -- a forward and backward stepwise selection of all model terms including second degree interactions, and a backward stepwise selection of model terms with no interaction specified.
 
--   The interaction model with backward selection produces a relatively middling BIC of approximately $-1525$, and only uses 26 variables (remember that the output in the console includes the intercept, so variables == output - 1). That doesn't seem TOO bad, but let's keep looking.
+-   The interaction model with backward selection produces a relatively middling BIC of approximately $-1463$, and uses 42 variables (remember that the output in the console includes the intercept, so variables == output - 1). That doesn't seem TOO bad, but let's keep looking.
 
--   The interaction model with forward selection produces a slightly improved BIC of approximately $-1451$, but uses 33 variables. That doesn't seem great to me either.
+-   The interaction model with forward selection produces a slightly diminished BIC of approximately $-1444$, but uses 36 variables. I like this one quite a bit -- I have significantly fewer variables, but don't necessarily sacrifice much in terms of BIC. I think this will be a subset of choice in the future. 
 
--   The model with no interactions produces a BIC of approximately $-1321$ with 8 variables. This clearly has an improved BIC over the first model, however, collinearity worries me. Its coefficients have some nasty values in that correlation plot above -- poverty percent and pctprivatecoverage are inversely correlated to a strong degree, same thing with the percent of individuals with a bachelors degree.'
+-   The model with no interactions produces a BIC of approximately $-1309$ with 8 variables. This clearly has an improved BIC over the first model, however, collinearity worries me. Its coefficients have some nasty values in that correlation plot above -- poverty percent and pctprivatecoverage are inversely correlated to a strong degree, same thing with the percent of individuals with a bachelors degree.'
 
 Let's check the VIF, just to be safe.
+
+```{r}
+best.frwd <- data.frame(nvars=1:50,
+  Cp     = summary(model.frwd)$cp,
+  r2     = summary(model.frwd)$rsq,
+  Adj_r2 = summary(model.frwd)$adjr2,
+  BIC    =summary(model.frwd)$bic)%>%
+  gather(metric, value, -c(nvars))
+
+ggplot(best.frwd, aes(x=nvars, y=value, color=metric))+
+  geom_line()+
+  facet_grid(metric~., scales = "free")
+```
 
 # Check VIF
 
@@ -399,7 +418,6 @@ model4 <- mgcv::gam(
 )
 summary(model4)
 gam.check(model4)
-?gam.check
 ```
 
 As an aside, I really dislike that mgcv doesn't have a way to blanket all variables in the style of lm(y ~ . ). This process took way too long to perfect, AND is quite confusing to look at! Ew.
@@ -441,17 +459,17 @@ Print out RMSE, we'll improve $R^2$ and hopefully RMSE after some tuning.
 # Random Forest Grid Search
 Clearly, will need to finish the work in this section...
 ```{r}
-hyper_grid_rf <- expand.grid(
-  mtry = seq(2, 25, by = 1)
-  node_size = 
-)
+#hyper_grid_rf <- expand.grid(
+#  mtry = seq(2, 25, by = 1)
+#  node_size = 
+#)
 
 ```
 
 # Jackknife Cross Validation
 
 I tried getting this to work, and it crashed Posit Cloud. Ten times. Even when nothing else was running on my machine. No errors, just kept crashing. Sooooooooo... I'm doing a work-around.
-```{r}
+
 # Prediction Function
 predict.regsubsets <- function(object, newdata, id,...){
   form  <- as.formula(object$call[[2]])
@@ -460,13 +478,13 @@ predict.regsubsets <- function(object, newdata, id,...){
   mat[, names(coefi)]%*%coefi
 }
 
-jk.errors <- matrix(NA, 2895, 10) # Length 3047, 28 vars total
+jk.errors <- matrix(NA, 2895, 28) # Length 2895, 28 vars total
 
 for (k in 1:2895){
   best.model.cv <- regsubsets(
     target_deathrate ~ ., 
     data = na.omit(cancer2[-k, ]),
-    nvmax = 10
+    nvmax = 28
   )
   for (i in 1:28){
     pred <- predict.regsubsets(
@@ -482,23 +500,29 @@ plot(mse.models ,
      pch=19, type="b",
      xlab="nr predictors",
      ylab="MSE")
-```
+     
+I include this code just to show you what I was trying -- perhaps there's a glaring error I'm not seeing??? I think the for-loops are just too inefficient for my machine, it's crashed without an error several times now.
 
 # Jackknife Cross Validation, Part 2!
+I hope this suffices... I've tried to follow what you're doing in the code above as well as I can using caret. 
 ```{r}
-train.control <- trainControl(method = "LOOCV")
+train.control <- trainControl(method = "LOOCV", number = 5)
 
-cvmodel <- train(target_deathrate ~ ., data = na.omit(cancer2), method = "lm", trControl = train.control)
+cvmodel <- train(target_deathrate ~ ., data = na.omit(cancer2), method = "leapSeq", trControl = train.control)
 print(cvmodel)
 
-?train
 ```
+Surprising! This reports hitting a minimum RMSE at only 3 variables!! Let's see which 3 it thinks are important.
 
+```{r}
+coef(cvmodel$finalModel, id = 3)
+```
+Huh. Not what I was expecting, but also not surprising! You'll notice the random forest pulled out incidence rate and bachelor's degree over 25 as its top two most important variables, and that is clearly mirrored here. This is different from the subsets I did way up in the variable selection area (sorry about how messy this document is by the way...), but that's likely because I didn't do a *best* subset, I went with backwards to save on computational efficiency. My laptop isn't liking Posit Cloud too much, I'm afraid.  
 
 # Lasso Regression
 I chose Lasso Regression for the following reason: I believe all the variables in this dataset have some importance, but that a small number of variables explain the majority of the variation. I know I have some multicollinearity in this model, the plot way up there shows that much, and I want to handle that without ruining interpretability (because let's face it, a random forest isn't interpretable at all!). Not to mention the built in quick-and-dirty feature selection is nice.
 ```{r}
-model_eq <- model.matrix(target_deathrate ~ ., data = na.omit(cancer2))[, -1]
+model_eq <- model.matrix(target_deathrate ~ (.)^2, data = na.omit(cancer2))[, -1]
 
 outcome <- na.omit(cancer2)[, "target_deathrate"]
 
@@ -508,10 +532,13 @@ plot(lambda_lasso)
 
 lambda_lasso
 ```
+Please note that the RMSE of this regression is roughly equal to the RMSE of the Random Forest above, and the linear model jack-knife cross-validation RMSE.
+
 ```{r}
 # Find Lasso min
 
 lasso_min <- lambda_lasso$lambda.min
+print("lambda min")
 lasso_min
 
 final_lasso_model <- glmnet(
@@ -520,7 +547,7 @@ final_lasso_model <- glmnet(
 
 final_lasso_model$beta
 ```
- 
+ Our final $\lambda$ is a value of .1667195, and our final model would be everything in the output with a numeric value -- anything with a dot was essentially smoothed out of the model. 
 
 
 ### All Previous Work Below This Line
